@@ -19,19 +19,26 @@ This is the proxy server for the DiabetesFriend App. It allows the app to work i
     *   Create a new repository on GitHub (e.g., `my-diabetes-server`).
     *   Upload these files (`main.py`, `requirements.txt`) to it.
 
-2.  **Deploy on Render**:
-    *   Go to Dashboard -> New Web Service.
-    *   Connect your GitHub repo.
-    *   **Runtime**: Python 3.
-    *   **Start Command**: `uvicorn main:app --host 0.0.0.0 --port $PORT`
-    *   **Environment Variables** (Add these in the Dashboard):
-        *   `MONGO_URL`: `mongodb+srv://admin:YOUR_PASSWORD@diaapp.uwp3kcp.mongodb.net/?appName=DiaApp` (Replace `YOUR_PASSWORD` with your real password).
-        *   `GEMINI_API_KEY`: Your raw Google Gemini API key (starts with AIza...).
+## 2. Deployment (Vercel - Recommended)
+
+1.  **Upload to GitHub**:
+    *   Upload the server files (`main.py`, `requirements.txt`, `vercel.json`) to your GitHub repository.
+
+2.  **Deploy on Vercel**:
+    *   Go to [vercel.com](https://vercel.com/) and Sign Up/Login with GitHub.
+    *   Click "Add New..." -> "Project".
+    *   Import your `DiabetesFriend` repository.
+    *   **Configure Project**:
+        *   **Root Directory**: Click "Edit" and select `DiabetesFriend_Server`.
+        *   **Environment Variables**:
+            *   `MONGO_URL`: `mongodb+srv://admin:YOUR_PASSWORD@diaapp.uwp3kcp.mongodb.net/?appName=DiaApp`
+            *   `GEMINI_API_KEY`: Your Google Gemini API Key.
+    *   Click **Deploy**.
 
 ## 3. Connect App
 
-Once deployed, Render will give you a URL (e.g., `https://my-diabetes-server.onrender.com`).
+Once deployed, copy the Domain (e.g., `https://diabetesfriend-server.vercel.app`).
 
 Update your Flutter app's `gemini_service.dart`:
 Change the `_baseUrl` to:
-`https://my-diabetes-server.onrender.com/proxy_gemini`
+`https://your-app-url.vercel.app/proxy_gemini`
