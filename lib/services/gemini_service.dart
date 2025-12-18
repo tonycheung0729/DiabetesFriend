@@ -3,8 +3,11 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 
 class GeminiService {
-  static const String apiKey = 'AIzaSyDLPXvUECpdft2aS1aYjp6joB1ZuqTBLN4';
-  static const String _baseUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent?key=$apiKey';
+  // API Key is now handled on the server side for security
+  // static const String apiKey = 'REMOVED'; 
+  
+  // Point to the user's personal Vercel Proxy Server
+  static const String _baseUrl = 'https://diabetes-friend.vercel.app/proxy_gemini';
 
   Future<String> analyzeFood(File image) async {
     final bytes = await image.readAsBytes();
