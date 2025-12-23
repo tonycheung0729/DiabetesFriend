@@ -11,10 +11,10 @@ class FoodEntry extends HiveObject {
   final String imagePath;
 
   @HiveField(2)
-  final String fullResponse;
+  String fullResponse;
 
   @HiveField(3)
-  final String summary;
+  String summary;
 
   @HiveField(4)
   final DateTime timestamp;
