@@ -171,7 +171,7 @@ class FoodProvider extends ChangeNotifier {
   }
 
   Future<void> _streamEntryAnalysis(FoodEntry entry, File image) async {
-      final prompt = "I am a 60 year old man live in Hong Kong, I have type 2 diabetes and have also had my gallbladder removed. My name is 張耀倫, you can call me 耀倫. You are an expert in nutrition for people with type 2 diabetes and post-cholecystectomy (gallbladder removal). I will upload an image of a food item or a food menu. \n\nPlease:\n1. Identify the food in the image as accurately as possible.\n2. Estimate the nutritional values of the food, including: Carbohydrates (g), Sugars (g), Fats (g), Proteins (g), Calories (kcal),sodium， fibre, and any other nutrients(like vitamin...).\n3. Give a strict health rating for a type 2 diabetes patient: 「非常健康」, 「良好」, 「安全」, 「適量」, 「略為不健康」, 「風險高」, 「極度不建議」.\n4. Explain your reasoning clearly: Pros and cons of this food for someone with type 2 diabetes and without a gallbladder.\n5. Compare sugar/carbs to daily recommended limits For a person with type 2 diabetes, and for a healthy person.\n6. Compare calorie/fat to daily recommendations.\n7. Recommend healthier alternatives with various variety and provide personalized advice.\n7.5: Cheer me up.\n8.Finally, under the current context, suggest 7 further questions that I can ask you to get deeper insights.\n\nFormat the detailed analysis in Chinese Traditional and Markdown.\n\nCRITICAL FINAL INSTRUCTION:\nThe VERY FIRST LINE of your response MUST be strictly in this format (No Markdown, No Introduction):\nSUMMARY: [Food Name] | [Calories]千卡 | [Carbs]克碳水 | [Rating]\nExample: SUMMARY: 海南雞飯 | 600千卡 | 50克碳水 | 略為不健康\nDO NOT output anything before this line.";
+      final prompt = "I am a 60 year old man live in Hong Kong, I have type 2 diabetes and have also had my gallbladder removed. My name is 張耀倫, you can call me 耀倫. You are an expert in nutrition for people with type 2 diabetes and post-cholecystectomy (gallbladder removal). I will upload an image of a food item or a food menu. \n\nPlease:\n1. Identify the food in the image as accurately as possible.\n2. Estimate the nutritional values of the food, including: Carbohydrates (g), Sugars (g), Fats (g), Proteins (g), Calories (kcal),sodium， fibre, and any other nutrients(like vitamin...).\n3. Give a strict health rating for a type 2 diabetes patient: 「非常健康」, 「良好」, 「安全」, 「適量」, 「略為不健康」, 「風險高」, 「極度不建議」.\n4. Explain your reasoning clearly: Pros and cons of this food for someone with type 2 diabetes and without a gallbladder.\n5. Compare sugar/carbs to daily recommended limits For a person with type 2 diabetes, and for a healthy person.\n6. Compare calorie/fat to daily recommendations.\n7. Recommend healthier alternatives with various variety and provide personalized advice.\n7.5: Cheer me up.\n8.Finally, under the current context, suggest 7 further questions that I can ask you to get deeper insights.\n\nFormat the detailed analysis in Chinese Traditional and Markdown.\n\nCRITICAL OUTPUT FORMAT:\nYou MUST begin your response with a single line summary in this exact format:\nSUMMARY: [Food Name] | [Calories]千卡 | [Carbs]克碳水 | [Rating]\n\nExample:\nSUMMARY: 海南雞飯 | 600千卡 | 50克碳水 | 略為不健康\n\n(Do not use Markdown bolding for the summary line. Follow this line with your detailed analysis.)";
       
       String fullText = "";
       try {
@@ -190,21 +190,25 @@ class FoodProvider extends ChangeNotifier {
         
         // Extract summary
         // Same logic as _extractVerdict
-        final RegExp summaryRegex = RegExp(r'^(?:\\*\\*)?SUMMARY(?:\\*\\*)?:\\s*(.+)$', caseSensitive: false, multiLine: true);
+        // Match strict SUMMARY line
+        final RegExp summaryRegex = RegExp(r'(?:^|\n)(?:\*\*)?SUMMARY(?:\*\*)?:\s*(.+)$', caseSensitive: false, multiLine: true);
         final match = summaryRegex.firstMatch(fullText);
         
         if (match != null) {
-          entry.summary = match.group(0)!; // Keep full SUMMARY line for now or parse parts? 
-          // The current app logic expects entry.summary to be just the data? 
-          // Wait, the previous logic parsed entry.summary for UI display?
-          // No, existing entries have entire JSON or String.
-          
-          // Let's parse the parts to update entry fields
-          final summaryLine = match.group(1)!.trim(); // "Name | Cals | Carbs | Rating"
-          entry.summary = "SUMMARY: $summaryLine"; // Store standardized format
+          final summaryLine = match.group(1)!.trim(); 
+          entry.summary = "SUMMARY: $summaryLine"; 
         } else {
-             // Fallback
-             entry.summary = "分析完成";
+             // Fallback: Look for the pipe pattern line (e.g. "Ramen | 500kcal | ...")
+             // Pattern: Text | Text | Text | Text
+             final RegExp pipeRegex = RegExp(r'(?:^|\n)([^|\n]+\|[^|\n]+\|[^|\n]+\|[^|\n]+)(?:$|\n)', multiLine: true);
+             final pipeMatch = pipeRegex.firstMatch(fullText);
+             
+             if (pipeMatch != null) {
+                final summaryLine = pipeMatch.group(1)!.trim();
+                entry.summary = "SUMMARY: $summaryLine";
+             } else {
+                entry.summary = "分析完成";
+             }
         }
         
         await entry.save();
@@ -454,7 +458,8 @@ class _HomeScreenState extends State<HomeScreen> {
               final parts = entry.summary.split('|');
               if (parts.length >= 4) {
                  // New Format: Name | Cals | Carbs | Rating
-                 foodName = parts[0].trim();
+                 // parts[0] might be "SUMMARY: Food Name" or just "Food Name"
+                 foodName = parts[0].trim().replaceAll(RegExp(r'^(?:\*\*)?SUMMARY(?:\*\*)?:?\s*', caseSensitive: false), '');
                  cals = parts[1].trim();
                  carbs = parts[2].trim();
                  rating = parts[3].trim();
@@ -913,6 +918,7 @@ class DetailScreen extends StatefulWidget {
 class _DetailScreenState extends State<DetailScreen> {
   final TextEditingController _controller = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  double _textSize = 18.0; // Default larger size for elderly
 
   @override
   void dispose() {
@@ -992,7 +998,38 @@ class _DetailScreenState extends State<DetailScreen> {
     _scrollToBottom();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('分析與對話')),
+      appBar: AppBar(
+        title: const Text('分析與對話'),
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(50.0),
+          child: Container(
+             color: Colors.grey.shade100,
+             padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 0),
+             child: Row(
+               children: [
+                 const Text("字體大小: ", style: TextStyle(fontWeight: FontWeight.bold)),
+                 const Icon(Icons.text_fields, size: 16),
+                 Expanded(
+                   child: Slider(
+                     value: _textSize,
+                     min: 14.0,
+                     max: 34.0,
+                     divisions: 10,
+                     activeColor: Colors.teal,
+                     label: _textSize.round().toString(),
+                     onChanged: (val) {
+                       setState(() {
+                         _textSize = val;
+                       });
+                     },
+                   ),
+                 ),
+                 const Icon(Icons.text_fields, size: 28),
+               ],
+             ),
+          ),
+        ),
+      ),
       body: Column(
         children: [
           Expanded(
@@ -1036,6 +1073,7 @@ Please analyze and answer in detail ,remember to answer in Traditional Chinese w
                 Expanded(
                   child: TextField(
                     controller: _controller,
+                    style: TextStyle(fontSize: _textSize), // Also apply to input
                     decoration: const InputDecoration(
                       hintText: '想問更多問題？',
                       border: OutlineInputBorder(),
@@ -1087,8 +1125,23 @@ Please analyze and answer in detail ,remember to answer in Traditional Chinese w
           borderRadius: BorderRadius.circular(12),
         ),
         child: isUser 
-          ? Text(text, style: const TextStyle(fontSize: 16))
-          : MarkdownBody(data: text, selectable: true),
+          ? Text(text, style: TextStyle(fontSize: _textSize))
+          : MarkdownBody(
+              data: text, 
+              selectable: true,
+              styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
+                p: TextStyle(fontSize: _textSize),
+                h1: TextStyle(fontSize: _textSize + 8, fontWeight: FontWeight.bold),
+                h2: TextStyle(fontSize: _textSize + 6, fontWeight: FontWeight.bold),
+                h3: TextStyle(fontSize: _textSize + 4, fontWeight: FontWeight.bold),
+                h4: TextStyle(fontSize: _textSize + 2, fontWeight: FontWeight.bold),
+                h5: TextStyle(fontSize: _textSize + 1, fontWeight: FontWeight.bold),
+                h6: TextStyle(fontSize: _textSize, fontWeight: FontWeight.bold),
+                listBullet: TextStyle(fontSize: _textSize),
+                strong: TextStyle(fontWeight: FontWeight.bold, fontSize: _textSize),
+                em: TextStyle(fontStyle: FontStyle.italic, fontSize: _textSize),
+              ),
+            ),
       ),
     );
   }
