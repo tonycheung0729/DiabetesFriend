@@ -155,7 +155,8 @@ async def proxy_gemini_stream(request: Request):
             converted_contents.append({"role": role, "parts": parts})
 
         # Select Model
-        model = genai.GenerativeModel("gemini-3.0-pro-preview") 
+        # Reverting to 1.5-pro because 3.0 likely does not exist and causes crashes
+        model = genai.GenerativeModel("gemini-3-pro-preview") 
 
         async def generate():
             full_text_accumulator = ""
