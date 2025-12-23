@@ -69,7 +69,7 @@ async def proxy_gemini(request: Request):
         # The Flutter Service uses 'gemini-3-pro-preview' which is bleeding edge.
         # Let's align with the service: 
         
-        target_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={GEMINI_API_KEY}"
+        target_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.0-pro-preview:generateContent?key={GEMINI_API_KEY}"
         # Ensure this model ID is accessible to your API Key.
         
         google_response = requests.post(
@@ -111,9 +111,6 @@ async def proxy_gemini(request: Request):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
 @app.post("/proxy_gemini_stream")
 async def proxy_gemini_stream(request: Request):
     """
@@ -140,15 +137,7 @@ async def proxy_gemini_stream(request: Request):
         genai.configure(api_key=GEMINI_API_KEY)
         
         # Parse Body to SDK format
-        # App sends: { "contents": [ { "role": "...", "parts": [ { "text": "..." }, { "inline_data": ... } ] } ] }
         contents = body.get("contents", [])
-        
-        # Convert "inline_data" from REST format to SDK format if needed
-        # SDK expects parts as dicts or specific classes. 
-        # Ideally we pass 'contents' directly if compatible, but structure might differ slightly.
-        # REST: {"inline_data": {"mime_type": "...", "data": "..."}}
-        # SDK:  {"mime_type": "...", "data": "..."} inside a dict? Or 'blob'?
-        # Let's map it safe.
         
         converted_contents = []
         for msg in contents:
@@ -158,29 +147,23 @@ async def proxy_gemini_stream(request: Request):
                 if "text" in p:
                     parts.append({"text": p["text"]})
                 elif "inline_data" in p:
-                    # SDK expects keys 'mime_type' and 'data' directly in a dict for blob?
-                    # Or inside 'inline_data'?
-                    # genai.GenerativeModel.generate_content(contents=...) supports mixed types.
+                    # SDK expects 'mime_type' and 'data' directly in a dict (not wrapped in inline_data)
                     parts.append({
-                        "inline_data": {
-                            "mime_type": p["inline_data"]["mime_type"],
-                            "data": p["inline_data"]["data"]
-                        }
+                        "mime_type": p["inline_data"]["mime_type"],
+                        "data": p["inline_data"]["data"]
                     })
             converted_contents.append({"role": role, "parts": parts})
 
         # Select Model
-        # Using gemini-1.5-flash for speed/streaming usually, but let's stick to pro for quality
-        model = genai.GenerativeModel("gemini-1.5-pro") 
+        model = genai.GenerativeModel("gemini-3.0-pro-preview") 
 
         async def generate():
             full_text_accumulator = ""
             try:
-                # SDK Stream
-                # stream=True returns a generator
-                response_stream = model.generate_content(converted_contents, stream=True)
+                # SDK Stream (Async)
+                response_stream = await model.generate_content_async(converted_contents, stream=True)
                 
-                for chunk in response_stream:
+                async for chunk in response_stream:
                     if chunk.text:
                         text_fragment = chunk.text
                         full_text_accumulator += text_fragment
