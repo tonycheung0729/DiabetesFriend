@@ -34,10 +34,20 @@
 *   **本地存儲**: 所有飲食記錄和對話歷史均存儲在用戶手機本地 (Hive Database)，保障私隱。
 *   **離線查看**: 即使沒有網絡，也可以查看之前的記錄。
 
+### 5. 👨‍⚕️ 問病問診 (Health Diagnosis)
+*   **症狀分析**: 用戶輸入身體不適的症狀（如「最近血糖9.2，左腹痛」）。
+*   **AI 診斷**: 生成詳細的健康分析報告，包括可能成因、建議檢查項目、生活調整建議（基於 2 型糖尿病 + 無膽囊的背景）。
+*   **專業圖標**: 這些記錄會標記為醫療圖標，方便識別。
+
+### 6. 🔓 無國界支援 (Cross-Border Support)
+*   **Proxy 技術**: 內置 **Vercel Proxy 服務器**，即使身處 **中國內地** 或 **香港** 等限制地區，無需 VPN 也能順暢使用所有 AI 功能。
+*   **雲端備份**: 每次查詢均自動備份至雲端 MongoDB 數據庫，保障數據安全。
+
 ## 🛠️ 技術架構
-*   **前端框架**: Flutter (Dart)
+*   **前端**: Flutter (Dart)
+*   **後端**: Python FastAPI (Vercel Serverless)
 *   **AI 模型**: Google Gemini 3.0 Pro (`gemini-3-pro-preview`)
-*   **本地數據庫**: Hive
+*   **數據庫**: Hive (Local) + MongoDB (Cloud Backup)
 *   **圖片庫存取**: Gal & Image Picker
 *   **日期格式化**: Intl (繁體中文 `zh_HK`)
 

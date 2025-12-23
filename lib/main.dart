@@ -177,6 +177,20 @@ class FoodProvider extends ChangeNotifier {
     }
   }
 
+  Future<FoodEntry> startFreeChat() async {
+    final entry = FoodEntry(
+      id: DateTime.now().toIso8601String(),
+      imagePath: "FREE_CHAT", // Marker for Free Chat
+      fullResponse: "歡迎！這是您的自由聊天空間。您可以隨意發問。",
+      summary: "自由聊天",
+      timestamp: DateTime.now(),
+      chatHistory: [],
+    );
+    await _box.add(entry);
+    notifyListeners();
+    return entry;
+  }
+
   Future<void> sendChatMessage(FoodEntry entry, String message) async {
     _isLoading = true;
     notifyListeners();
@@ -187,19 +201,36 @@ class FoodProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-        // Pass history EXCLUDING the just-added message to avoid duplication in API call
+        // Pass history EXCLUDING the just-added message
         final historyToSend = entry.chatHistory.take(entry.chatHistory.length - 1).toList();
         
         File? imageFile;
-        // Check if it's a real image path
-        if (entry.imagePath.isNotEmpty && entry.imagePath != "MEAL_PLAN" && entry.imagePath != "HEALTH_QUERY") {
+        if (entry.imagePath.isNotEmpty && entry.imagePath != "MEAL_PLAN" && entry.imagePath != "HEALTH_QUERY" && entry.imagePath != "FREE_CHAT") {
            imageFile = File(entry.imagePath);
         }
 
-        final response = await _geminiService.chatFood(message, historyToSend, image: imageFile);
+        // Free Chat suffix logic
+        String messageToSend = message;
+        if (entry.imagePath == "FREE_CHAT") {
+             messageToSend += " \n\nAt the End, Under the current context, suggest 7 further questions that I can ask you to get further or deeper insights. Remember all output should be written in Chinese Traditinoal";
+        }
+
+        // STREAMING IMPLEMENTATION
+        // 1. Add placeholder for AI response
+        entry.chatHistory.add("model:"); 
+        notifyListeners();
         
-        // Add model response
-        entry.chatHistory.add("model:$response");
+        String fullResponse = "";
+
+        // 2. Listen to stream
+        await for (final chunk in _geminiService.chatFoodStream(messageToSend, historyToSend, image: imageFile)) {
+           fullResponse += chunk;
+           // Update the last message (which is the model response)
+           entry.chatHistory.last = "model:$fullResponse";
+           notifyListeners();
+        }
+
+        // 3. Save final state
         await entry.save();
 
     } catch (e) {
@@ -211,27 +242,51 @@ class FoodProvider extends ChangeNotifier {
     }
   }
 
+
+
+  // NEW: Helper to extract the structured summary line if available
   String _extractVerdict(String response) {
-    // Chinese Traditional Heuristics (Prioritize specific labels)
-    if (response.contains("非常健康")) return "非常健康";
+    // 1. Check for Structured Summary first
+    // Format: SUMMARY: [Name] | [Calories] | [Carbs] | [Rating]
+    // Regex allows:
+    // - Case insensitive "summary"
+    // - Optional ** bold markers
+    // - Optional whitespace
+    final RegExp summaryRegex = RegExp(r'^(?:\*\*)?SUMMARY(?:\*\*)?:\s*(.+)$', caseSensitive: false, multiLine: true);
+    final match = summaryRegex.firstMatch(response);
+    
+    if (match != null) {
+      return match.group(1)!.trim(); // Returns "Name | Cals | Carbs | Rating"
+    }
+
+    // 2. Fallback to extracting just the rating (Legacy behavior)
+    return _extractLegacyRating(response);
+  }
+
+  String _extractLegacyRating(String response) {
+     if (response.contains("非常健康")) return "非常健康";
     if (response.contains("良好")) return "良好";
     if (response.contains("安全")) return "安全";
     if (response.contains("適量")) return "適量";
     if (response.contains("略為不健康")) return "略為不健康";
     if (response.contains("風險高")) return "風險高";
     if (response.contains("極度不建議")) return "極度不建議";
-    
-    // Fallback/Legacy
     if (response.contains("Safe")) return "Safe";
     if (response.contains("Moderate")) return "Moderate";
     if (response.contains("Risky")) return "Risky";
-    
     return "未知";
   }
 }
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  DateTime? _selectedMonth;
 
   @override
   Widget build(BuildContext context) {
@@ -240,6 +295,40 @@ class HomeScreen extends StatelessWidget {
         title: const Text('糖友紀錄'),
         centerTitle: true,
         actions: [
+          Consumer<FoodProvider>(
+            builder: (context, provider, child) {
+              // Get available months from entries
+              final months = provider.entries
+                  .map((e) => DateTime(e.timestamp.year, e.timestamp.month))
+                  .toSet()
+                  .toList()
+                  ..sort((a, b) => b.compareTo(a)); // Newest first
+
+              return PopupMenuButton<DateTime?>(
+                icon: const Icon(Icons.filter_list),
+                tooltip: "依月份篩選",
+                onSelected: (date) {
+                  setState(() {
+                    _selectedMonth = date;
+                  });
+                },
+                itemBuilder: (context) {
+                  return [
+                    const PopupMenuItem<DateTime?>(
+                      value: null,
+                      child: Text("全部顯示"),
+                    ),
+                    ...months.map((date) {
+                      return PopupMenuItem<DateTime?>(
+                        value: date,
+                        child: Text(DateFormat('yyyy年 MM月', 'zh_HK').format(date)),
+                      );
+                    }),
+                  ];
+                },
+              );
+            },
+          ),
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 8.0),
             child: FilledButton.icon(
@@ -258,60 +347,206 @@ class HomeScreen extends StatelessWidget {
       ),
       body: Consumer<FoodProvider>(
         builder: (context, provider, child) {
-          if (provider.entries.isEmpty) {
-            return const Center(child: Text('暫無紀錄，請掃描食物！'));
+          // Filter entries
+          final filteredEntries = _selectedMonth == null
+              ? provider.entries
+              : provider.entries.where((e) {
+                  return e.timestamp.year == _selectedMonth!.year &&
+                         e.timestamp.month == _selectedMonth!.month;
+                }).toList();
+
+          if (filteredEntries.isEmpty) {
+             if (provider.entries.isEmpty) {
+               return const Center(child: Text('暫無紀錄，請掃描食物！'));
+             } else {
+               return Center(
+                 child: Column(
+                   mainAxisAlignment: MainAxisAlignment.center,
+                   children: [
+                     const Text('此月份沒有紀錄'),
+                     TextButton(
+                       onPressed: () => setState(() => _selectedMonth = null),
+                       child: const Text("查看全部"),
+                     )
+                   ],
+                 ),
+               );
+             }
           }
           return ListView.builder(
-            itemCount: provider.entries.length,
+            itemCount: filteredEntries.length,
             itemBuilder: (context, index) {
-              final entry = provider.entries[index];
+              final entry = filteredEntries[index];
+              
+              // PARSE INFO
+              String foodName = "未知食物";
+              String cals = "";
+              String carbs = "";
+              String rating = "未知";
+              
+              final parts = entry.summary.split('|');
+              if (parts.length >= 4) {
+                 // New Format: Name | Cals | Carbs | Rating
+                 foodName = parts[0].trim();
+                 cals = parts[1].trim();
+                 carbs = parts[2].trim();
+                 rating = parts[3].trim();
+              } else {
+                 // Legacy Format: Just Rating or custom string
+                 if (entry.imagePath == "MEAL_PLAN") {
+                   foodName = "一日三餐建議";
+                   rating = "建議";
+                 } else if (entry.imagePath == "HEALTH_QUERY") {
+                   foodName = "健康問診";
+                   rating = "諮詢";
+                 } else {
+                   foodName = "食物紀錄"; // Default for old entries
+                   rating = entry.summary;
+                 }
+              }
+
+              // Special handling for non-food types to look consistent
+              if (entry.imagePath == "MEAL_PLAN") {
+                foodName = "一日三餐建議";
+                cals = "";
+                carbs = "";
+                rating = ""; 
+              } else if (entry.imagePath == "HEALTH_QUERY") {
+                // Parsing detail from summary for Health Query if we stored formatted string, 
+                // but usually legacy logic applies directly. 
+                // Let's keep specific logic for visual cleanliness.
+                rating = "健康分析";
+                if (entry.summary.startsWith("健康諮詢:")) {
+                   foodName = entry.summary.replaceAll("健康諮詢: ", "");
+                }
+              }
+
+
               return Card(
                 margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                child: ListTile(
-                  leading: ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: entry.imagePath == "MEAL_PLAN" 
-                      ? Container(
-                          width: 50, height: 50,
-                          color: Colors.teal.shade100,
-                          child: const Icon(Icons.restaurant_menu, color: Colors.teal),
-                        )
-                      : entry.imagePath == "HEALTH_QUERY"
-                        ? Container(
-                            width: 50, height: 50,
-                            color: Colors.red.shade100,
-                            child: const Icon(Icons.medical_services, color: Colors.deepOrange),
-                          )
-                        : entry.imagePath.isEmpty
-                        ? Container(
-                            width: 50, height: 50,
-                            color: Colors.orange.shade100,
-                            child: const Icon(Icons.edit_note, color: Colors.orange),
-                          )
-                        : Image.file(
-                            File(entry.imagePath),
-                            width: 50,
-                            height: 50,
-                            fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) => const Icon(Icons.broken_image),
-                          ),
-                  ),
-                  title: Text(DateFormat('yyyy年MM月dd日下午h時mm分', 'zh_HK').format(entry.timestamp).replaceAll('下午下午', '下午').replaceAll('上午上午', '上午')), // Fix potential double prefix
-                  subtitle: Text(
-                    entry.summary,
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: _getVerdictColor(entry.summary),
-                    ),
-                  ),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                elevation: 2,
+                child: InkWell(
                   onTap: () {
-                    Navigator.push(
+                     Navigator.push(
                       context,
                       MaterialPageRoute(
                         builder: (_) => DetailScreen(entry: entry),
                       ),
                     );
                   },
+                  borderRadius: BorderRadius.circular(12),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12.0),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // IMAGE
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: entry.imagePath == "MEAL_PLAN" 
+                            ? Container(
+                                width: 70, height: 70,
+                                color: Colors.teal.shade100,
+                                child: const Icon(Icons.restaurant_menu, color: Colors.teal, size: 30),
+                              )
+                            : entry.imagePath == "HEALTH_QUERY"
+                              ? Container(
+                                  width: 70, height: 70,
+                                  color: Colors.red.shade100,
+                                  child: const Icon(Icons.medical_services, color: Colors.deepOrange, size: 30),
+                                )
+                              : entry.imagePath == "FREE_CHAT"
+                                ? Container(
+                                    width: 70, height: 70,
+                                    color: Colors.blue.shade100,
+                                    child: const Icon(Icons.chat_bubble_outline, color: Colors.blue, size: 30),
+                                  )
+                                : (entry.imagePath.isEmpty
+                                ? Container(
+                                    width: 70, height: 70,
+                                    color: Colors.orange.shade100,
+                                    child: const Icon(Icons.edit_note, color: Colors.orange, size: 30),
+                                  )
+                                : Image.file(
+                                    File(entry.imagePath),
+                                    width: 70,
+                                    height: 70,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (context, error, stackTrace) => const Icon(Icons.broken_image),
+                                  )),
+                        ),
+                        
+                        const SizedBox(width: 12),
+                        
+                        // TEXT CONTENT
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // Line 1: Date (Smaller, Light Grey)
+                              // Format: MM月dd日... yyyy年
+                              // Requested: 12月18日下午6時52分 2025年
+                              Text(
+                                "${DateFormat('MM月dd日a h時mm分', 'zh_HK').format(entry.timestamp).replaceAll('下午下午', '下午').replaceAll('上午上午', '上午')} ${DateFormat('yyyy年', 'zh_HK').format(entry.timestamp)}",
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey.shade600,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+
+                              // Line 2: Rating + Name (Bold)
+                              RichText(
+                                text: TextSpan(
+                                  style: DefaultTextStyle.of(context).style,
+                                  children: [
+                                    if (rating.isNotEmpty && entry.imagePath != "MEAL_PLAN" && entry.imagePath != "FREE_CHAT")
+                                      TextSpan(
+                                        text: "$rating ",
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          color: _getVerdictColor(rating),
+                                          fontSize: 16,
+                                        ),
+                                      ),
+                                    TextSpan(
+                                      text: foodName,
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        // Apply the same color to the Name as requested
+                                        color: _getVerdictColor(rating) != Colors.grey ? _getVerdictColor(rating) : Colors.black87,
+                                        fontSize: 16,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              
+                              const SizedBox(height: 4),
+
+                              // Line 3: Details (Calories | Carbs)
+                              if (cals.isNotEmpty || carbs.isNotEmpty)
+                                Text(
+                                  "$cals | $carbs",
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: Colors.grey.shade700,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                )
+                              else if (entry.imagePath != "MEAL_PLAN" && entry.imagePath != "HEALTH_QUERY" && entry.imagePath != "FREE_CHAT")
+                                // Placeholder for formatting consistency if data missing
+                                const SizedBox.shrink(),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               );
             },
@@ -331,6 +566,24 @@ class HomeScreen extends StatelessWidget {
             icon: const Icon(Icons.medical_services),
             backgroundColor: Colors.red.shade100,
             foregroundColor: Colors.deepOrange,
+          ),
+          const SizedBox(height: 12),
+          FloatingActionButton.extended(
+            heroTag: "free_chat_btn",
+            onPressed: () async {
+               final provider = Provider.of<FoodProvider>(context, listen: false);
+               final entry = await provider.startFreeChat();
+               if (context.mounted) {
+                 Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => DetailScreen(entry: entry)),
+                );
+               }
+            },
+            label: const Text('自由聊天'),
+            icon: const Icon(Icons.chat_bubble),
+            backgroundColor: Colors.blue.shade100,
+            foregroundColor: Colors.blue.shade900,
           ),
           const SizedBox(height: 12),
           FloatingActionButton.extended(
@@ -617,13 +870,20 @@ class _DetailScreenState extends State<DetailScreen> {
                color: Colors.red.shade50,
                child: const Center(child: Icon(Icons.medical_services, size: 80, color: Colors.deepOrange)),
              )
-         : widget.entry.imagePath.isEmpty
+          : widget.entry.imagePath == "FREE_CHAT"
+            ? Container(
+                width: double.infinity,
+                height: 150,
+                color: Colors.blue.shade50,
+                child: const Center(child: Icon(Icons.chat_bubble_outline, size: 80, color: Colors.blue)),
+              )
+          : widget.entry.imagePath.isEmpty
            ? Container(
                width: double.infinity,
                height: 150,
                color: Colors.orange.shade50,
                child: const Center(child: Icon(Icons.edit_note, size: 80, color: Colors.orange)),
-             )
+            )
            : Image.file(
               File(widget.entry.imagePath),
               width: double.infinity,
@@ -661,6 +921,31 @@ class _DetailScreenState extends State<DetailScreen> {
             ),
           ),
           if (provider.isLoading) const LinearProgressIndicator(),
+          if (widget.entry.imagePath == "FREE_CHAT")
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8.0),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: ActionChip(
+                  label: const Text('我可以問什麼?'),
+                  avatar: const Icon(Icons.help_outline, size: 16),
+                  backgroundColor: Colors.blue.shade50,
+                  onPressed: () {
+                      final prompt = """I am a 60-year-old man living in Hong Kong with type 2 diabetes. I want to live a good, fulfilling life in all aspects—physical health, mental well-being, relationships, and purpose.
+From your perspective as an AI, what are the most important and insightful questions I should ask you to help guide me toward that goal?
+Please analyze and answer in detail ,remember to answer in Traditional Chinese with Markdown formatting, considering various dimensions such as:
+– Health and disease management
+– Lifestyle and habits
+– Emotional and mental well-being
+– Social life and relationships
+– Purpose, meaning, and personal growth
+– Cultural and regional context (specific to Hong Kong)
+""";
+                      provider.sendChatMessage(widget.entry, prompt);
+                  },
+                ),
+              ),
+            ),
           Padding(
             padding: const EdgeInsets.all(8.0),
             child: Row(
@@ -693,6 +978,22 @@ class _DetailScreenState extends State<DetailScreen> {
   }
 
   Widget _buildMessageBubble(String text, {required bool isUser}) {
+    // MASK THE LONG PROMPT IN UI
+    if (isUser && text.contains("I am a 60-year-old man living in Hong Kong with type 2 diabetes. I want to live a good")) {
+      return Align(
+        alignment: Alignment.centerRight,
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.teal.shade100,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: const Text("思考中...", style: TextStyle(fontSize: 16, fontStyle: FontStyle.italic)),
+        ),
+      );
+    }
+
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(

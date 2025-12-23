@@ -7,7 +7,9 @@ class GeminiService {
   // static const String apiKey = 'REMOVED'; 
   
   // Point to the user's personal Vercel Proxy Server
-  static const String _baseUrl = 'https://diabetes-friend.vercel.app/proxy_gemini';
+  // static const String _baseUrl = 'https://diabetes-friend.vercel.app/proxy_gemini'; // Old non-stream
+  static const String _baseUrl = 'https://diabetes-friend.vercel.app';
+
 
   Future<String> analyzeFood(File image) async {
     final bytes = await image.readAsBytes();
@@ -21,7 +23,7 @@ class GeminiService {
           {
             "parts": [
               {
-                "text": "I am a 60 year old man live in Hong Kong, I have type 2 diabetes and have also had my gallbladder removed. You are an expert in nutrition for people with type 2 diabetes and post-cholecystectomy (gallbladder removal). I will upload an image of a food item or a food menu . Please: 1. Identify the food in the image as accurately as possible. 2. Estimate the nutritional values of the food, including: Carbohydrates (g), Sugars (g), Fats (g), Proteins (g), Calories (kcal),fibbre, and any other nutrients (e.g., vitamin, sodium, saturated fat). 3. Give a strict health rating for a type 2 diabetes patient, using one of these labels: 「非常健康」(Very Healthy), 「良好」(Good), 「安全」(Safe), 「適量」(Moderate), 「略為不健康」(Slightly Unhealthy), 「風險高」(Risky), 「極度不建議」(Too Risky). 4. Explain your reasoning clearly: Pros and cons of this food for someone with type 2 diabetes and without a gallbladder. 5. Compare this food’s sugar and carbohydrate content to daily recommended limits: For a person with type 2 diabetes, and for a healthy person. 6. Compare its calorie and fat content to daily intake recommendations. 7. Recommend healthier food alternatives with various variety, along with personalized health advice for someone with both conditions (type 2 diabetes + gallbladder removed).7.5: cheer me up by give me motivating and promising word 8. After that, under the current context, suggest 7 further questions that I can ask you to get deeper insights. Format the entire response in Chinese Traditional and Markdown."
+                "text": "I am a 60 year old man live in Hong Kong, I have type 2 diabetes and have also had my gallbladder removed. My name is 張耀倫, you can call me 耀倫. You are an expert in nutrition for people with type 2 diabetes and post-cholecystectomy (gallbladder removal). I will upload an image of a food item or a food menu. \n\nPlease:\n1. Identify the food in the image as accurately as possible.\n2. Estimate the nutritional values of the food, including: Carbohydrates (g), Sugars (g), Fats (g), Proteins (g), Calories (kcal),sodium， fibre, and any other nutrients(like vitamin...).\n3. Give a strict health rating for a type 2 diabetes patient: 「非常健康」, 「良好」, 「安全」, 「適量」, 「略為不健康」, 「風險高」, 「極度不建議」.\n4. Explain your reasoning clearly: Pros and cons of this food for someone with type 2 diabetes and without a gallbladder.\n5. Compare sugar/carbs to daily recommended limits For a person with type 2 diabetes, and for a healthy person.\n6. Compare calorie/fat to daily recommendations.\n7. Recommend healthier alternatives with various variety and provide personalized advice.\n7.5: Cheer me up.\n8.Finally, under the current context, suggest 7 further questions that I can ask you to get deeper insights.\n\nFormat the detailed analysis in Chinese Traditional and Markdown.\n\nCRITICAL FINAL INSTRUCTION:\nThe VERY FIRST LINE of your response MUST be strictly in this format (No Markdown, No Introduction):\nSUMMARY: [Food Name] | [Calories]千卡 | [Carbs]克碳水 | [Rating]\nExample: SUMMARY: 海南雞飯 | 600千卡 | 50克碳水 | 略為不健康\nDO NOT output anything before this line."
               },
               {
                 "inline_data": {
@@ -102,8 +104,85 @@ class GeminiService {
 
     return _parseResponse(response);
   }
+
+  Stream<String> chatFoodStream(String query, List<String> history, {File? image}) async* {
+    String? base64Image;
+    if (image != null) {
+      final bytes = await image.readAsBytes();
+      base64Image = base64Encode(bytes);
+    }
+
+    // Construct history for API (Same as chatFood)
+    List<Map<String, dynamic>> contents = [];
+    for (var item in history) {
+      if (item.startsWith("user:")) {
+        contents.add({
+          "role": "user",
+          "parts": [{"text": item.substring(5)}]
+        });
+      } else if (item.startsWith("model:")) {
+        contents.add({
+          "role": "model",
+          "parts": [{"text": item.substring(6)}]
+        });
+      }
+    }
+
+    final userParts = <Map<String, dynamic>>[{"text": query}];
+    if (base64Image != null) {
+      userParts.add({
+        "inline_data": {
+          "mime_type": "image/jpeg",
+          "data": base64Image
+        }
+      });
+    }
+    contents.add({
+      "role": "user",
+      "parts": userParts
+    });
+
+    final request = http.Request('POST', Uri.parse('$_baseUrl/proxy_gemini_stream'));
+    request.headers['Content-Type'] = 'application/json';
+    request.body = jsonEncode({
+      "contents": contents,
+      // "generationConfig": ... // Optional
+    });
+
+    try {
+      final client = http.Client();
+      final streamedResponse = await client.send(request);
+
+      if (streamedResponse.statusCode != 200) {
+        throw Exception('Stream Failed: ${streamedResponse.statusCode}');
+      }
+
+      // Transform stream to lines
+      await for (final line in streamedResponse.stream
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())) {
+          
+        if (line.startsWith('data: ')) {
+          final dataStr = line.substring(6); // Remove 'data: '
+          try {
+            final json = jsonDecode(dataStr);
+            if (json['text'] != null) {
+              yield json['text'];
+            }
+          } catch (e) {
+            // Ignore parse errors or "Error:" messages for now, just log
+            print("Stream Parse Error: $e");
+          }
+        }
+      }
+      client.close();
+    } catch (e) {
+       yield " [Connection Error: $e]";
+    }
+  }
+
   Future<String> analyzeText(String text) async {
-    final prompt = "I am a 60 year old man live in Hong Kong, I have type 2 diabetes and have also had my gallbladder removed.My name is 張耀倫, you can call me 耀倫. You are an expert in nutrition for people with type 2 diabetes and post-cholecystectomy (gallbladder removal). I am asking about a food item: '$text'. Please: 1. Identify the food as accurately as possible. 2. Estimate the nutritional values of the food, including: Carbohydrates (g), Sugars (g), Fats (g), Proteins (g), Calories (kcal), fibre, and any other nutrients (e.g., vitamin, sodium, saturated fat). 3. Give a strict health rating for a type 2 diabetes patient, using one of these labels: 「非常健康」(Very Healthy), 「良好」(Good), 「安全」(Safe), 「適量」(Moderate), 「略為不健康」(Slightly Unhealthy), 「風險高」(Risky), 「極度不建議」(Too Risky). 4. Explain your reasoning clearly: Pros and cons of this food for someone with type 2 diabetes and without a gallbladder. 5. Compare this food’s sugar and carbohydrate content to daily recommended limits: For a person with type 2 diabetes, and for a healthy person. 6. Compare its calorie and fat content to daily intake recommendations. 7. Recommend healthier food alternatives with various variety, along with personalized health advice for someone with both conditions (type 2 diabetes + gallbladder removed). 7.5: cheer me up by give me motivating and promising word. 8. After that, under the current context, suggest 7 further questions that I can ask you to get deeper insights. Format the entire response in Chinese Traditional and Markdown.";
+    final prompt = "I am a 60 year old man live in Hong Kong, I have type 2 diabetes and have also had my gallbladder removed. My name is 張耀倫. You are an expert in nutrition. I am asking about a food item: '$text'. \n\nPlease:\n1. Identify the food.\n2. Estimate nutritional values (Carbs, Sugar, Fat, Protein, Calories).\n3. Give a strict health rating: 「非常健康」, 「良好」, 「安全」, 「適量」, 「略為不健康」, 「風險高」, 「極度不建議」.\n4. Explain reasoning (Pros/Cons).\n5. Compare to daily limits.\n6. Compare to daily intake.\n7. Recommend alternatives and advice.\n7.5: Cheer me up.\n8. Suggest 7 questions.\n\nFormat in Chinese Traditional and Markdown.\n\nCRITICAL FINAL INSTRUCTION:\nThe VERY FIRST LINE of your response MUST be strictly in this format (No Markdown, No Introduction):\nSUMMARY: [Food Name] | [Calories]千卡 | [Carbs]克碳水 | [Rating]\nExample: SUMMARY: 海南雞飯 | 600千卡 | 50克碳水 | 略為不健康\nDO NOT output anything before this line.";
 
     final response = await http.post(
       Uri.parse(_baseUrl),

@@ -3,8 +3,12 @@
 This document provides a technical overview of the **DiabetesFriend** (糖友) application. It is intended for developers who will maintain, debug, or extend the project.
 
 ## 🏗️ Project Architecture
-
+ 
 The application follows a simple **MVVM-like** architecture using `Provider` for state management and `Hive` for local persistence.
+ 
+### Connectivity Modes
+*   **Direct Mode** (Default): App talks directly to Google Gemini API. (Blocked in CN/HK).
+*   **Proxy Mode** (Active): App talks to a custom **Python/FastAPI Proxy Server** hosted on **Vercel**, which forwards requests to Google. This allows usage in restricted regions and provides a **MongoDB** cloud backup.
 
 ### Directory Structure
 ```
@@ -14,7 +18,12 @@ lib/
 │   ├── food_entry.dart        # Data Model (Hive Object)
 │   └── food_entry.g.dart      # Hive Adapter (Generated)
 └── services/
-    └── gemini_service.dart    # AI Integration (Google Gemini API)
+    └── gemini_service.dart    # AI Integration (Points to Proxy URL)
+
+DiabetesFriend_Server/         # Python Proxy Server Code
+├── main.dart                  # FastAPI Server Logic
+├── vercel.json                # Vercel Config
+└── requirements.txt           # Python Dependencies
 ```
 
 ## 🧩 Key Components
@@ -23,28 +32,25 @@ lib/
 *   **Role**: Manages the list of `FoodEntry` objects and handles UI state (`isLoading`).
 *   **Persistence**: Interacts directly with the Hive box `food_entries`.
 *   **Logic**:
-    *   `analyzeAndSave(File image)`: Orchestrates image analysis and DB saving.
-    *   `analyzeTextAndSave(String text)`: Handles text-only analysis.
+    *   `analyzeAndSave(File image)`: Orchestrates image analysis.
+    *   `analyzeHealthAndSave(String symptoms)`: **[NEW]** Handles text-based symptom analysis.
     *   `generateMealPlanAndSave()`: Generates the 1-day meal plan.
-    *   `sendChatMessage(...)`: Manages multi-turn chat, including optimistic UI updates (adding user message instantly before API call).
+    *   `sendChatMessage(...)`: Manages multi-turn chat.
 
 ### 2. AI Service (`GeminiService`)
-*   **Role**: Encapsulates all interactions with the Google Gemini API.
-*   **Model**: Uses `gemini-3-pro-preview` for high-quality reasoning.
+*   **Role**: interface for AI calls.
+*   **Architecture Change**: Now points to `https://diabetes-friend.vercel.app/proxy_gemini` instead of Google directly.
 *   **Key Methods**:
-    *   `analyzeFood(File)`: Sends image + prompt for initial analysis.
-    *   `analyzeText(String)`: Sends text prompt for analysis.
-    *   `getMealPlan()`: Sends specific prompt for meal planning.
-    *   `chatFood(...)`: Handles follow-up questions. It reconstructs conversation history and **optimizes token usage** by re-sending the image only when necessary (or effectively every time in REST stateless mode, though sending `inline_data` is required for the model to "see" the image in the current turn).
-*   **Robustness**: Implements `_parseResponse` with **defensive checks** for `candidates`, `content`, and `parts`. This prevents `NoSuchMethodError` crashes when the AI triggers safety filters and returns empty content.
+    *   `analyzeHealth(String)`: Sends detailed medical prompt with user background (Type 2 + No Gallbladder).
 
 ### 3. Data Model (`FoodEntry`)
-*   **Storage**: Stored in Hive (`Box<FoodEntry>`).
+*   **Storage**: Stored in Hive (`Box<FoodEntry>`) + Cloud Backup (MongoDB via Proxy).
 *   **Fields**:
     *   `imagePath`: Path to the local file. **Special Values**:
-        *   `""` (Empty String): Indicates a Text-Only entry.
-        *   `"MEAL_PLAN"`: Indicates a Meal Plan entry.
-    *   `chatHistory`: `List<String>` storing conversation turns (`user:msg`, `model:msg`).
+        *   `""` (Empty String): Text-Only Food entry.
+        *   `"MEAL_PLAN"`: Meal Plan entry.
+        *   `"HEALTH_QUERY"`: **[NEW]** Health/Symptom Diagnosis entry.
+    *   `chatHistory`: `List<String>` conversation turns.
 
 ## 🛠️ Setup & specific Workflows
 
