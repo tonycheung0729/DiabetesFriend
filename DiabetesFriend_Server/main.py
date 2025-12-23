@@ -15,7 +15,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 # Model Endpoint
 # Matches the one used in GeminiService.dart
-GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={GEMINI_API_KEY}"
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent?key={GEMINI_API_KEY}"
 
 # Database Setup
 try:
