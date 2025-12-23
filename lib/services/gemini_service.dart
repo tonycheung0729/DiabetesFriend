@@ -16,7 +16,7 @@ class GeminiService {
     final base64Image = base64Encode(bytes);
 
     final response = await http.post(
-      Uri.parse(_baseUrl),
+      Uri.parse('$_baseUrl/proxy_gemini'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
         "contents": [
@@ -89,7 +89,7 @@ class GeminiService {
     });
 
     final response = await http.post(
-      Uri.parse(_baseUrl),
+      Uri.parse('$_baseUrl/proxy_gemini'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
         "contents": contents,
@@ -185,7 +185,7 @@ class GeminiService {
     final prompt = "I am a 60 year old man live in Hong Kong, I have type 2 diabetes and have also had my gallbladder removed. My name is 張耀倫. You are an expert in nutrition. I am asking about a food item: '$text'. \n\nPlease:\n1. Identify the food.\n2. Estimate nutritional values (Carbs, Sugar, Fat, Protein, Calories).\n3. Give a strict health rating: 「非常健康」, 「良好」, 「安全」, 「適量」, 「略為不健康」, 「風險高」, 「極度不建議」.\n4. Explain reasoning (Pros/Cons).\n5. Compare to daily limits.\n6. Compare to daily intake.\n7. Recommend alternatives and advice.\n7.5: Cheer me up.\n8. Suggest 7 questions.\n\nFormat in Chinese Traditional and Markdown.\n\nCRITICAL FINAL INSTRUCTION:\nThe VERY FIRST LINE of your response MUST be strictly in this format (No Markdown, No Introduction):\nSUMMARY: [Food Name] | [Calories]千卡 | [Carbs]克碳水 | [Rating]\nExample: SUMMARY: 海南雞飯 | 600千卡 | 50克碳水 | 略為不健康\nDO NOT output anything before this line.";
 
     final response = await http.post(
-      Uri.parse(_baseUrl),
+      Uri.parse('$_baseUrl/proxy_gemini'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
         "contents": [
@@ -208,7 +208,7 @@ class GeminiService {
     const prompt = "I’m a 60-year-old man living in Hong Kong with type 2 diabetes and no gallbladder.My name is 張耀倫, you can call me 耀倫. You are a nutrition expert for diabetes and post-cholecystectomy patients. Please design a personalized one-day meal plan (3 meals), considering my condition and local diet preferences. Include: Recommended foods per meal (main, protein, veggies, fruit, fat source) Nutritional estimates Dietary principles explained Healthier versions of Hong Kong-style meals(both eat outside and cook at home) Timing tips and optional snacks Motivational words to support dietary discipline Answer in Traditional Chinese with Markdown formatting. also ,given my information and background (60-year-old man living in Hong Kong with type 2 diabetes), advice detaily from various perspective what i can do (activity i can do/event i can join/execerise i can do /entertainment/ personal developement / other ) ,both mental and physical, to have a better life and have a better health . at the end ,Based on this context, suggest 7 follow-up questions I can ask to explore deeper or more personalized insights.";
 
     final response = await http.post(
-      Uri.parse(_baseUrl),
+      Uri.parse('$_baseUrl/proxy_gemini'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
         "contents": [
@@ -231,7 +231,7 @@ class GeminiService {
     final prompt = "You are a professional AI-powered health assistant and symptom analysis expert. You specialize in internal medicine, chronic diseases in older adults, and common medical conditions.Here is some of my background information (I am a 60 year old man live in Hong Kong, I have type 2 diabetes and have also had my gallbladder removed) .\nBased on the personal background, medical history, and symptoms I provide, perform the following tasks, : \n1.Analyze my current health situation and provide a list of possible conditions or diseases that may be related to my symptoms. \n2.Give professional Health advice base on my siutation, including: \n-What tests or examinations I should consider; \n-What kind of doctor or specialist I should consult; \n-Whether I should seek immediate medical attention. \n-Lifestyle or dietary adjustments I should make; \n-What i can do long term to improve my Health& Situation(excercise to do /supplement to take) \n3.Based on the current context, generate 5 intelligent follow-up questions that I can answer to help you understand more and 5 follow-up questions that i can ask ai further.\n 4.Please remember to answer me in Traditional Chinese. \nHere is my recent Situation/Symptoms : $symptoms";
 
     final response = await http.post(
-      Uri.parse(_baseUrl),
+      Uri.parse('$_baseUrl/proxy_gemini'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
         "contents": [

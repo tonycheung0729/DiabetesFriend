@@ -1,12 +1,10 @@
-import os
-import requests
-import datetime
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import StreamingResponse
 from pymongo import MongoClient
 import uvicorn
 import json
 import asyncio
+import google.generativeai as genai
 
 app = FastAPI()
 
@@ -114,10 +112,13 @@ async def proxy_gemini(request: Request):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/proxy_gemini_stream")
 async def proxy_gemini_stream(request: Request):
     """
-    Proxies request to Gemini using Server-Sent Events (SSE) for streaming.
+    Proxies request to Gemini using Server-Sent Events (SSE) via Official SDK.
     """
     if not GEMINI_API_KEY:
          raise HTTPException(status_code=500, detail="Server Configuration Error: GEMINI_API_KEY not set.")
@@ -136,164 +137,62 @@ async def proxy_gemini_stream(request: Request):
             result = history_collection.insert_one(record)
             saved_id = result.inserted_id
 
-        # Gemini Stream URL
-        # Use simple 'gemini-pro' or match the model requested. 
-        # For simplicity and known streaming support, we use 'gemini-1.5-flash' or 'gemini-pro'.
-        # Let's stick to the one used in non-stream or upgrades.
-        # User was using 'gemini-3-pro-preview' ?? 
-        # Actually user code said 'gemini-3-pro-preview' but that might be a hallucination/typo in previous turns or specific key.
-        # Let's use specific model 'gemini-1.5-pro' or 'gemini-pro' which is stable. 
-        # Or Just use the URL from the non-stream function: 'gemini-3-pro-preview' (if valid)
-        # Safest is to use the standard 'gemini-1.5-flash' for speed/stream or 'gemini-pro'.
-        # Let's use 'gemini-1.5-flash' for fast streaming if appropriate, or 'gemini-1.5-pro'.
-        # Given the previous code used "gemini-3-pro-preview", I will try to respect it but "streamGenerateContent" is key.
+        # Configure SDK
+        genai.configure(api_key=GEMINI_API_KEY)
         
-        # Checking previous code:
-        # target_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent?key={GEMINI_API_KEY}"
+        # Parse Body to SDK format
+        # App sends: { "contents": [ { "role": "...", "parts": [ { "text": "..." }, { "inline_data": ... } ] } ] }
+        contents = body.get("contents", [])
         
-        target_model = "gemini-1.5-pro" # Safe default for high quality
-        # stream endpoint
-        target_url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:streamGenerateContent?key={GEMINI_API_KEY}"
+        # Convert "inline_data" from REST format to SDK format if needed
+        # SDK expects parts as dicts or specific classes. 
+        # Ideally we pass 'contents' directly if compatible, but structure might differ slightly.
+        # REST: {"inline_data": {"mime_type": "...", "data": "..."}}
+        # SDK:  {"mime_type": "...", "data": "..."} inside a dict? Or 'blob'?
+        # Let's map it safe.
+        
+        converted_contents = []
+        for msg in contents:
+            role = msg.get("role", "user")
+            parts = []
+            for p in msg.get("parts", []):
+                if "text" in p:
+                    parts.append({"text": p["text"]})
+                elif "inline_data" in p:
+                    # SDK expects keys 'mime_type' and 'data' directly in a dict for blob?
+                    # Or inside 'inline_data'?
+                    # genai.GenerativeModel.generate_content(contents=...) supports mixed types.
+                    parts.append({
+                        "inline_data": {
+                            "mime_type": p["inline_data"]["mime_type"],
+                            "data": p["inline_data"]["data"]
+                        }
+                    })
+            converted_contents.append({"role": role, "parts": parts})
+
+        # Select Model
+        # Using gemini-1.5-flash for speed/streaming usually, but let's stick to pro for quality
+        model = genai.GenerativeModel("gemini-1.5-pro") 
 
         async def generate():
-            full_text = ""
+            full_text_accumulator = ""
             try:
-                # Use requests with stream=True
-                # We need to construct the payload exactly as Gemini expects
-                with requests.post(target_url, json=body, stream=True) as r:
-                    r.raise_for_status()
-                    # Gemini returns a JSON ARRAY: [ {candidate...}, {candidate...} ]
-                    # But streamed incrementally. 
-                    # We can't just parse line by line easily because it might be pretty printed or compact.
-                    # HOWEVER, usually chunks are separate JSON objects if using SSE?
-                    # No, REST API returns a continuous JSON array.
-                    # Valid Strategy: Accumulate buffer, try to find matching braces for objects.
-                    
-                    # SIMPLER PROXY:
-                    # Just forward the raw data? 
-                    # Frontend needs to parse it. 
-                    # If we forward raw, frontend deals with "[", ",", "]".
-                    
-                    # BETTER: We parse here and emit SSE.
-                    # We can use the 'google-generativeai' or just simple brace counting / chunking.
-                    # Let's try simple line processing if Gemini sends newlines. 
-                    # Gemini usually sends:
-                    # [
-                    # { ... data ... },
-                    # { ... data ... }
-                    # ]
-                    
-                    buffer = ""
-                    for chunk in r.iter_content(chunk_size=None):
-                        if chunk:
-                            text_chunk = chunk.decode("utf-8")
-                            buffer += text_chunk
-                            
-                            # Extremely naive JSON object extractor for array elements
-                            while "{" in buffer and "}" in buffer:
-                                try:
-                                    start = buffer.index("{")
-                                    end = buffer.index("}") + 1
-                                    # Basic check: matching braces count
-                                    # This is fragile for nested JSON. 
-                                    # Robust approach: 
-                                    # Since we just want text, maybe we just Regex extract "text": "..."?
-                                    # Robust enough for a proxy.
-                                    
-                                    # Let's iterate buffer and count braces
-                                    brace_count = 0
-                                    json_str = ""
-                                    found_obj = False
-                                    
-                                    for i, char in enumerate(buffer):
-                                        if char == '{':
-                                            brace_count += 1
-                                        elif char == '}':
-                                            brace_count -= 1
-                                            if brace_count == 0:
-                                                # Found a complete object?
-                                                # We need to ensure we started at a '{'.
-                                                # Wait, this loop starts from 0 of buffer.
-                                                # We should assume buffer starts with some noise like ",\n"
-                                                pass
-                                    
-                                    # RE-THINK: 
-                                    # Let's just Regex for "text": "..." inside the chunk?
-                                    # No, text might be split across chunks.
-                                    
-                                    # Let's try to load complete JSON objects.
-                                    # Only works if Gemini sends one JSON object per 'chunk' on the network, which isn't guaranteed.
-                                    
-                                    # ALTERNATIVE: Use Python SDK in server?
-                                    # Importing 'google.generativeai' would be much safer.
-                                    # But I don't want to break the user's venv requirements if I can help it.
-                                    # Current imports: requests, fastapi, pymongo, uvicorn. 
-                                    
-                                    # Let's try a heuristic:
-                                    # Split by "}\n," or similar delimiters if known.
-                                    # Or just regex find all '"text": "(.*?)"' and keep track of index? 
-                                    # Text might contain escaped quotes.
-                                    
-                                    # Let's use a simpler heuristic for now:
-                                    # Assume Gemini sends reasonably complete chunks or we just forward raw bytes 
-                                    # and let Flutter handle it?
-                                    # Flutter's http.Client also struggles with streaming JSON arrays.
-                                    
-                                    # BEST APPROACH for ROBUSTNESS: 
-                                    # Use `r.iter_lines()`?
-                                    # Does Gemini send newlines between array items? Yes usually.
-                                    pass
-                                except:
-                                    pass
-                                break 
-                            
-                            # Let's trust `iter_lines`
-                            pass
-
-                # RE-IMPLEMENTATION WITH ITER_LINES
-                # We need to open a new request context for iter_lines
+                # SDK Stream
+                # stream=True returns a generator
+                response_stream = model.generate_content(converted_contents, stream=True)
+                
+                for chunk in response_stream:
+                    if chunk.text:
+                        text_fragment = chunk.text
+                        full_text_accumulator += text_fragment
+                        # Yield SSE
+                        yield f"data: {json.dumps({'text': text_fragment})}\n\n"
+                        
             except Exception as e:
-                yield f"data: Error: {str(e)}\n\n"
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+                print(f"Stream Generate Error: {e}")
 
-        async def generate_v2():
-             full_text_accumulator = ""
-             try:
-                # Use requests with stream=True
-                with requests.post(target_url, json=body, stream=True) as r:
-                    r.raise_for_status()
-                    # Iterate lines. Gemini returns objects like:
-                    # {
-                    #   "candidates": ...
-                    # }
-                    # , (comma on new line?)
-                    for line in r.iter_lines():
-                        if line:
-                            decoded_line = line.decode('utf-8').strip()
-                            # Strip comma if present (streaming array)
-                            if decoded_line.endswith(','):
-                                decoded_line = decoded_line[:-1]
-                            # Strip [ or ]
-                            if decoded_line == '[' or decoded_line == ']':
-                                continue
-                            
-                            # Now try to parse JSON
-                            try:
-                                data = json.loads(decoded_line)
-                                # Extract text
-                                if 'candidates' in data and data['candidates']:
-                                    parts = data['candidates'][0]['content']['parts']
-                                    if parts:
-                                        text_fragment = parts[0]['text']
-                                        full_text_accumulator += text_fragment
-                                        # Yield SSE
-                                        # Replace newlines in data to avoid breaking SSE protocol
-                                        # Actually SSE data field support newlines if we escape or use multiple data lines.
-                                        # Easiest: JSON dump the fragment.
-                                        yield f"data: {json.dumps({'text': text_fragment})}\n\n"
-                            except json.JSONDecodeError:
-                                # Incomplete line or just structure
-                                continue
-             finally:
+            finally:
                  # Update DB
                  if history_collection is not None and saved_id:
                      history_collection.update_one(
@@ -305,7 +204,7 @@ async def proxy_gemini_stream(request: Request):
                         }}
                     )
 
-        return StreamingResponse(generate_v2(), media_type="text/event-stream")
+        return StreamingResponse(generate(), media_type="text/event-stream")
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
