@@ -69,7 +69,7 @@ async def proxy_gemini(request: Request):
         # The Flutter Service uses 'gemini-3-pro-preview' which is bleeding edge.
         # Let's align with the service: 
         
-        target_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.0-pro-preview:generateContent?key={GEMINI_API_KEY}"
+        target_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent?key={GEMINI_API_KEY}"
         # Ensure this model ID is accessible to your API Key.
         
         google_response = requests.post(
